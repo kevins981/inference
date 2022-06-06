@@ -480,6 +480,9 @@ def main():
     # find backend
     backend = get_backend(args.backend, args.dataset, args.max_ind_range, args.data_sub_sample_rate, args.use_gpu)
 
+    # backend contains architecture parameters such as m_spa (embedding dimension), ln_emb (list of embedding
+    # table dimensions) etc.
+
     # dataset to use
     wanted_dataset, pre_proc, post_proc, kwargs = SUPPORTED_DATASETS[args.dataset]
 
@@ -501,6 +504,12 @@ def main():
                         **kwargs)
     # load model to backend
     model = backend.load(args.model_path, inputs=args.inputs, outputs=args.outputs)
+    # load: loads the model and stores it. See backend_pytorch_native.py for details
+    # after this, the dlrm model should have all the trained weights from the loaded model. 
+    # Note: this seems inefficient memory wise, as we seem to need to load two copies of the weights
+    # into memory. One copy is randomly intiailized, another copy is loaded from saved trained model file.
+    # TODO: Check if this is in fact the case. Maybe pytorch is smart enough to only store one copy of the weights.
+
     final_results = {
         "runtime": model.name(),
         "version": model.version(),

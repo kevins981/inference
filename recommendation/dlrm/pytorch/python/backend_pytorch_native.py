@@ -78,9 +78,18 @@ class BackendPytorchNative(backend.Backend):
                 )
         else:
             # when targeting inference on CPU
+            # Uses pickle to load the saved model file on disk. I imagine this model contains
+            # the embedding and MLP weights. 
+            # Does this overwrite the random weights initialized in DRLM_Net constructor?
+            # In dlrm_s_pytorch.py (separate DLRM repo), the DLRM_Net costructor calls 
+            # create_emb(), which randomly initializes all the embedding layer. 
+            # The dlrm object here contains the embedding layers, which is random.
+            # So how do the weights get updated to the trained model? 
             ld_model = torch.load(model_path, map_location=torch.device('cpu'))
         # debug print
         # print(ld_model)
+        # The weights copying is probably performed. load_state_dict copies parameters from 
+        # ld_model["state_dict"] into dlrm. 
         dlrm.load_state_dict(ld_model["state_dict"])
         self.model = dlrm
 
@@ -122,5 +131,9 @@ class BackendPytorchNative(backend.Backend):
                 else batch_lS_o.to(self.device)
 
         with torch.no_grad():
-             output = self.model(dense_x=batch_dense_X, lS_o=batch_lS_o, lS_i=batch_lS_i)
+            # self.model is the dlrm object. 
+            # What does this mean? Long story short, this calls forward() from DLRM_Net class.
+            # So the DLRM_Net class inherits from pytorch Module class, which specifies __call__ to be
+            # forward(). This means that calling the object is equivalent to calling forward(). 
+            output = self.model(dense_x=batch_dense_X, lS_o=batch_lS_o, lS_i=batch_lS_i)
         return output
