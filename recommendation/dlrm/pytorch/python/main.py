@@ -1,6 +1,41 @@
 """
 mlperf inference benchmarking tool
 """
+# Kevin Notes
+
+###############
+## Scenarios
+###############
+# The four different scenarios are defined at: 
+# https://github.com/mlcommons/inference_policies/blob/master/inference_rules.adoc#3-scenarios
+
+# According to MLPerf, "A sample is the unit on which inference is run. E.g., an image, or a sentence.
+# A query is a set of N samples that are issued to an inference system together. N is a positive integer.
+# For example, a single query contains 8 images."
+# I find this to be rather confusing for DLRM. Does one sample equal to one inference? 
+# The doc later defines one sample of DLRM to be "up to 700 user-item pairs". 
+# I am guessing this means that one DLRM inference can batch up to
+# 700 user-item pairs (with no batching, each DLRM inference consumes one user-item pair).
+
+# The Server scenario uses samples/query of 1, so I treat sample and query as the same thing here.
+# In this scenario, queries from the frontend webserver arrive based on Poisson distribution. 
+# Each query could be something along the lines of: "Which 10 posts should I recommend to user X?"
+# To answer this query, DLRM needs to process up to 700 user-item pairs and find the top 10 items.
+
+# The Offline scenario focus on inference throughput. There is only one giant query for the entire
+# benchmark execution. This query contains at least 24,576 samples (not sure where this number comes from).
+# Each sample contains at most 700 user-item pairs. So this scenario is asking DLRM to perform (at least) 
+# 24576 inferences, each inference consisting of (at most) 700 user-item pairs.
+
+###############
+## User-item Pair Per Sample Distribution
+###############
+# In other words, how does MLPerf decide how many user-item pairs should be in each sample(inference)?
+# Recall that it is up to 700 pairs. The dist_quantile.txt file specifies the sample size quantiles:
+# 100, 100, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 300, 300, 400, 500, 600, 700
+# So sample size 200 is the most common.
+
+
 
 from __future__ import division
 from __future__ import print_function
@@ -307,6 +342,7 @@ def get_backend(backend, dataset, max_ind_range, data_sub_sample_rate, use_gpu):
 
 class Item:
     """An item that we queue for processing by the thread pool."""
+    # Ok, some kind of work pool and thread pool model. Documentation?
 
     def __init__(self, query_id, content_id, batch_dense_X, batch_lS_o, batch_lS_i, batch_T=None, idx_offsets=None):
         self.query_id = query_id
@@ -412,19 +448,28 @@ class QueueRunner(RunnerBase):
             self.run_one_item(qitem)
             tasks_queue.task_done()
 
+    # Override enqueue from RunnerBase.
     def enqueue(self, query_samples):
+        # What are these query_samples?
         idx = [q.index for q in query_samples]
         query_id = [q.id for q in query_samples]
         query_len = len(query_samples)
 
         if query_len < self.max_batchsize:
             batch_dense_X, batch_lS_o, batch_lS_i, batch_T, idx_offsets = self.ds.get_samples(idx)
+            # Send all samples as one task
             self.tasks.put(Item(query_id, idx, batch_dense_X, batch_lS_o, batch_lS_i, batch_T, idx_offsets))
         else:
             bs = self.max_batchsize
+            # If number of samples per query > max_batchsize, split the query into size max_batchsize.
+            # This is most likely the case for the Offline scenario, as samples/query is at least 24576. 
+            # If the max_batchsize is e.g. 2048, then the samples will be broken down into groups of 
+            # 2048 and sent to the model. (MLPerf calls these mini-batches. I don't think this is what 
+            # mini-batch means?)
             for i in range(0, query_len, bs):
                 ie = min(i + bs, query_len)
                 batch_dense_X, batch_lS_o, batch_lS_i, batch_T, idx_offsets = self.ds.get_samples(idx[i:ie])
+                # Samples broken down into tasks
                 self.tasks.put(Item(query_id[i:ie], idx[i:ie], batch_dense_X, batch_lS_o, batch_lS_i, batch_T, idx_offsets))
 
     def finish(self):
@@ -592,6 +637,7 @@ def main():
         settings.server_target_latency_ns = int(args.max_latency * NANO_SEC)
         settings.multi_stream_expected_latency_ns = int(args.max_latency * NANO_SEC)
 
+    # lg is the MLPerf loadgen object. SUT = system under test
     sut = lg.ConstructSUT(issue_queries, flush_queries)
     qsl = lg.ConstructQSL(count, min(count, args.samples_per_query_offline), ds.load_query_samples, ds.unload_query_samples)
 
